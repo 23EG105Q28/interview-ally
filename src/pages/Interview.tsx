@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, User, MessageSquare, BarChart3 } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, User, Send } from "lucide-react";
+import { useMediaDevices } from "@/hooks/useMediaDevices";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { useInterviewChat } from "@/hooks/useInterviewChat";
+import VideoPreview from "@/components/VideoPreview";
+import AIAvatar from "@/components/AIAvatar";
+import TranscriptDisplay from "@/components/TranscriptDisplay";
+import LiveMetrics from "@/components/LiveMetrics";
+import { useToast } from "@/hooks/use-toast";
 
 const personalityStyles = [
   { id: "friendly", label: "Friendly HR", description: "Warm and encouraging" },
@@ -13,9 +22,136 @@ const personalityStyles = [
 
 const Interview = () => {
   const [isStarted, setIsStarted] = useState(false);
-  const [micEnabled, setMicEnabled] = useState(true);
-  const [videoEnabled, setVideoEnabled] = useState(true);
   const [selectedStyle, setSelectedStyle] = useState("professional");
+  const [interviewTime, setInterviewTime] = useState(0);
+  const [questionCount, setQuestionCount] = useState(0);
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [manualInput, setManualInput] = useState("");
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const { toast } = useToast();
+
+  const { 
+    stream, 
+    videoRef, 
+    isVideoEnabled, 
+    isAudioEnabled, 
+    isInitializing,
+    error: mediaError,
+    startMedia, 
+    stopMedia, 
+    toggleVideo, 
+    toggleAudio 
+  } = useMediaDevices();
+
+  const {
+    isListening,
+    isSupported: speechSupported,
+    transcript,
+    interimTranscript,
+    startListening,
+    stopListening,
+    resetTranscript,
+  } = useSpeechRecognition();
+
+  const {
+    isSpeaking,
+    speak,
+    stop: stopSpeaking,
+  } = useSpeechSynthesis({ rate: 1, pitch: 1 });
+
+  const {
+    messages,
+    currentResponse,
+    isLoading,
+    error: chatError,
+    sendMessage,
+    startInterview,
+    resetChat,
+  } = useInterviewChat({
+    personality: selectedStyle,
+    onResponse: (text) => {
+      setCurrentQuestion(text);
+      speak(text);
+      setQuestionCount(prev => prev + 1);
+    },
+  });
+
+  // Timer
+  useEffect(() => {
+    if (isStarted) {
+      timerRef.current = setInterval(() => {
+        setInterviewTime(prev => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isStarted]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleStartInterview = async () => {
+    const mediaStream = await startMedia();
+    if (!mediaStream) {
+      toast({
+        title: "Camera/Microphone Required",
+        description: mediaError || "Please allow access to your camera and microphone.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsStarted(true);
+    await startInterview();
+    
+    if (speechSupported) {
+      startListening();
+    }
+  };
+
+  const handleEndInterview = () => {
+    stopMedia();
+    stopListening();
+    stopSpeaking();
+    resetChat();
+    setIsStarted(false);
+    setInterviewTime(0);
+    setQuestionCount(0);
+    setCurrentQuestion("");
+    resetTranscript();
+  };
+
+  const handleSendResponse = async () => {
+    const responseText = transcript.trim() || manualInput.trim();
+    if (!responseText || isLoading) return;
+    
+    stopListening();
+    stopSpeaking();
+    
+    await sendMessage(responseText);
+    
+    resetTranscript();
+    setManualInput("");
+    
+    if (speechSupported) {
+      setTimeout(() => startListening(), 1000);
+    }
+  };
+
+  // Show errors
+  useEffect(() => {
+    if (chatError) {
+      toast({
+        title: "Error",
+        description: chatError,
+        variant: "destructive",
+      });
+    }
+  }, [chatError, toast]);
 
   if (!isStarted) {
     return (
@@ -28,7 +164,7 @@ const Interview = () => {
                 AI Video Interview
               </h1>
               <p className="text-muted-foreground max-w-xl mx-auto">
-                Face a realistic AI interviewer that adapts to your responses. Choose your interviewer style and begin.
+                Face a realistic AI interviewer that adapts to your responses. Your camera and microphone will be used for the interview.
               </p>
             </div>
 
@@ -67,14 +203,24 @@ const Interview = () => {
                     <User className="w-10 h-10 text-muted-foreground" />
                   </div>
                   <p className="text-muted-foreground">Camera will activate when you start</p>
+                  <p className="text-sm text-muted-foreground/70 mt-2">
+                    {speechSupported 
+                      ? "Speech recognition is supported in your browser" 
+                      : "Use the text input to respond (speech not supported)"}
+                  </p>
                 </div>
               </div>
             </div>
 
             {/* Start Button */}
             <div className="text-center animate-slide-up" style={{ animationDelay: '300ms' }}>
-              <Button variant="hero" size="xl" onClick={() => setIsStarted(true)}>
-                Begin Interview
+              <Button 
+                variant="hero" 
+                size="xl" 
+                onClick={handleStartInterview}
+                disabled={isInitializing}
+              >
+                {isInitializing ? "Starting..." : "Begin Interview"}
               </Button>
               <p className="text-sm text-muted-foreground mt-4">
                 Ensure your webcam and microphone are working
@@ -96,101 +242,77 @@ const Interview = () => {
             <span className="text-sm font-medium text-foreground">Interview in Progress</span>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Duration: 05:32</span>
+            <span>Duration: {formatTime(interviewTime)}</span>
             <span className="text-border">|</span>
-            <span>Question 3 of ~8</span>
+            <span>Question {questionCount}</span>
           </div>
         </div>
       </header>
 
       {/* Main Interview Area */}
-      <main className="flex-1 p-4 md:p-6">
+      <main className="flex-1 p-4 md:p-6 overflow-hidden">
         <div className="container mx-auto h-full max-w-7xl">
           <div className="grid lg:grid-cols-3 gap-6 h-full">
-            {/* AI Interviewer Video */}
-            <div className="lg:col-span-2 glass rounded-2xl overflow-hidden relative">
-              <div className="aspect-video bg-gradient-to-br from-secondary to-card flex items-center justify-center">
-                {/* AI Avatar Placeholder */}
-                <div className="text-center">
-                  <div className="w-32 h-32 rounded-full bg-gradient-to-br from-primary/30 to-accent/30 mx-auto mb-6 flex items-center justify-center animate-pulse-glow">
-                    <User className="w-16 h-16 text-primary" />
-                  </div>
-                  <p className="text-foreground font-medium">AI Interviewer</p>
-                  <p className="text-sm text-muted-foreground">Speaking...</p>
-                </div>
+            {/* AI Interviewer */}
+            <div className="lg:col-span-2 glass rounded-2xl overflow-hidden relative flex flex-col">
+              <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-secondary to-card p-8">
+                <AIAvatar 
+                  isSpeaking={isSpeaking} 
+                  personality={selectedStyle}
+                />
               </div>
               
-              {/* Current Question Overlay */}
-              <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-background/90 to-transparent">
-                <div className="glass rounded-xl p-4">
-                  <p className="text-sm text-muted-foreground mb-2">Current Question</p>
-                  <p className="text-foreground">
-                    "Tell me about a challenging project you've worked on and how you overcame the obstacles you faced."
-                  </p>
-                </div>
+              {/* Current Question */}
+              <div className="p-4 bg-card/50 border-t border-border">
+                <p className="text-sm text-muted-foreground mb-2">Current Question</p>
+                <p className="text-foreground leading-relaxed">
+                  {currentResponse || currentQuestion || "Starting interview..."}
+                </p>
               </div>
             </div>
 
             {/* User Video & Controls */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 min-h-0">
               {/* User Camera */}
-              <div className="glass rounded-xl overflow-hidden flex-1">
-                <div className="h-full bg-secondary flex items-center justify-center min-h-[200px]">
-                  <div className="text-center">
-                    <div className="w-16 h-16 rounded-full bg-primary/20 mx-auto mb-3 flex items-center justify-center">
-                      <User className="w-8 h-8 text-primary" />
-                    </div>
-                    <p className="text-sm text-muted-foreground">Your Camera</p>
-                  </div>
-                </div>
-              </div>
+              <VideoPreview
+                videoRef={videoRef}
+                stream={stream}
+                isVideoEnabled={isVideoEnabled}
+                label="You"
+                className="h-[200px]"
+              />
 
-              {/* Real-time Feedback */}
-              <div className="glass rounded-xl p-4">
-                <h3 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4 text-primary" />
-                  Live Analysis
-                </h3>
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">Confidence</span>
-                      <span className="text-foreground">78%</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
-                      <div className="h-full w-[78%] bg-gradient-to-r from-primary to-accent rounded-full" />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">Clarity</span>
-                      <span className="text-foreground">85%</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
-                      <div className="h-full w-[85%] bg-gradient-to-r from-primary to-accent rounded-full" />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">Eye Contact</span>
-                      <span className="text-foreground">72%</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
-                      <div className="h-full w-[72%] bg-gradient-to-r from-primary to-accent rounded-full" />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Live Metrics */}
+              <LiveMetrics isActive={isListening} transcript={transcript} />
 
               {/* Transcript */}
-              <div className="glass rounded-xl p-4 flex-1 min-h-[150px]">
-                <h3 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-primary" />
-                  Live Transcript
-                </h3>
-                <p className="text-sm text-muted-foreground italic">
-                  "In my previous role, I led a team of five developers to migrate our legacy..."
-                </p>
+              <TranscriptDisplay
+                transcript={transcript}
+                interimTranscript={interimTranscript}
+                isListening={isListening}
+                className="flex-1 min-h-[100px]"
+              />
+
+              {/* Manual Input (fallback) */}
+              <div className="glass rounded-xl p-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualInput}
+                    onChange={(e) => setManualInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSendResponse()}
+                    placeholder={isListening ? "Or type here..." : "Type your response..."}
+                    className="flex-1 bg-transparent border-none focus:outline-none text-sm text-foreground placeholder:text-muted-foreground"
+                  />
+                  <Button 
+                    variant="hero" 
+                    size="icon" 
+                    onClick={handleSendResponse}
+                    disabled={isLoading || (!transcript.trim() && !manualInput.trim())}
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -201,38 +323,44 @@ const Interview = () => {
       <div className="glass border-t border-border/50 p-4">
         <div className="container mx-auto flex items-center justify-center gap-4">
           <Button
-            variant={micEnabled ? "secondary" : "destructive"}
+            variant={isAudioEnabled ? "secondary" : "destructive"}
             size="icon"
-            onClick={() => setMicEnabled(!micEnabled)}
+            onClick={toggleAudio}
             className="w-12 h-12 rounded-full"
           >
-            {micEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            {isAudioEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </Button>
           
           <Button
-            variant={videoEnabled ? "secondary" : "destructive"}
+            variant={isVideoEnabled ? "secondary" : "destructive"}
             size="icon"
-            onClick={() => setVideoEnabled(!videoEnabled)}
+            onClick={toggleVideo}
             className="w-12 h-12 rounded-full"
           >
-            {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+            {isVideoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
           </Button>
 
           <Button
             variant="destructive"
             size="icon"
             className="w-14 h-14 rounded-full"
-            onClick={() => setIsStarted(false)}
+            onClick={handleEndInterview}
           >
             <PhoneOff className="w-6 h-6" />
           </Button>
 
           <Button
-            variant="secondary"
+            variant={isListening ? "default" : "secondary"}
             size="icon"
+            onClick={isListening ? stopListening : startListening}
             className="w-12 h-12 rounded-full"
+            disabled={!speechSupported}
           >
-            <Settings className="w-5 h-5" />
+            {isListening ? (
+              <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
+            ) : (
+              <Mic className="w-5 h-5" />
+            )}
           </Button>
         </div>
       </div>
