@@ -18,22 +18,17 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Check if it's a base64 encoded file
-    let processedResumeText = resumeText;
-    let isFileUpload = false;
-    
-    if (resumeText.startsWith("[FILE_BASE64:")) {
-      isFileUpload = true;
-      // Extract file type and base64 content
-      const match = resumeText.match(/\[FILE_BASE64:([^\]]+)\](.+)/);
-      if (match) {
-        const fileType = match[1];
-        const base64Content = match[2];
-        processedResumeText = `This is a ${fileType} file encoded in base64. Please extract all text content from it and analyze it as a resume:\n\n${base64Content}`;
-      }
+    if (!resumeText || resumeText.trim().length < 50) {
+      throw new Error("Resume text is too short. Please provide a complete resume.");
     }
 
-    const systemPrompt = `You are an expert resume analyzer and ATS specialist. ${isFileUpload ? 'The user has uploaded a resume file (PDF, DOCX, or similar). First extract all readable text content from it, then analyze it.' : 'Analyze the provided resume text.'} Return a detailed JSON assessment.
+    // Truncate if too long (limit to ~50k chars to stay within token limits)
+    const maxLength = 50000;
+    const processedResumeText = resumeText.length > maxLength 
+      ? resumeText.substring(0, maxLength) + "\n\n[Resume truncated for analysis]"
+      : resumeText;
+
+    const systemPrompt = `You are an expert resume analyzer and ATS specialist. Analyze the provided resume text and return a detailed JSON assessment.
 
 Your response MUST be valid JSON with this exact structure:
 {

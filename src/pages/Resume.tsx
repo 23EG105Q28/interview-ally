@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Upload, FileText, CheckCircle, AlertTriangle, XCircle, Sparkles, Loader2, X } from "lucide-react";
 import { useResumeAnalysis } from "@/hooks/useResumeAnalysis";
 import { useToast } from "@/hooks/use-toast";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Set up PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const Resume = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -13,40 +17,37 @@ const Resume = () => {
 
   const { isAnalyzing, error, results, analyzeResume, reset } = useResumeAnalysis();
 
-  const extractTextFromFile = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      
-      reader.onload = async (e) => {
-        const content = e.target?.result;
-        
-        if (file.type === "text/plain") {
-          resolve(content as string);
-          return;
-        }
-        
-        // For PDF/DOCX, read as base64 and send to AI which can extract text
-        if (content instanceof ArrayBuffer) {
-          const bytes = new Uint8Array(content);
-          let binary = '';
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64 = btoa(binary);
-          resolve(`[FILE_BASE64:${file.type}]${base64}`);
-        } else {
-          resolve(content as string);
-        }
-      };
-      
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      
-      if (file.type === "text/plain") {
-        reader.readAsText(file);
-      } else {
-        reader.readAsArrayBuffer(file);
-      }
-    });
+  const extractTextFromPDF = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .join(" ");
+      fullText += pageText + "\n";
+    }
+    
+    return fullText.trim();
+  };
+
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    if (file.type === "text/plain") {
+      return await file.text();
+    }
+    
+    if (file.type === "application/pdf") {
+      const arrayBuffer = await file.arrayBuffer();
+      return await extractTextFromPDF(arrayBuffer);
+    }
+    
+    // For DOCX and other formats, read as text (best effort)
+    const text = await file.text();
+    // Clean up any binary garbage for DOCX
+    const cleanText = text.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ");
+    return cleanText;
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
