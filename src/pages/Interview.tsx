@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings, User, Send } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User } from "lucide-react";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
@@ -27,7 +27,9 @@ const Interview = () => {
   const [questionCount, setQuestionCount] = useState(0);
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [manualInput, setManualInput] = useState("");
+  const [questionTimeLeft, setQuestionTimeLeft] = useState(90);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const questionTimerRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
 
   const { 
@@ -73,8 +75,39 @@ const Interview = () => {
       setCurrentQuestion(text);
       speak(text);
       setQuestionCount(prev => prev + 1);
+      setQuestionTimeLeft(90); // Reset question timer
     },
   });
+
+  // Question timer (90 seconds per question)
+  useEffect(() => {
+    if (isStarted && !isLoading && !isSpeaking && questionCount > 0) {
+      questionTimerRef.current = setInterval(() => {
+        setQuestionTimeLeft(prev => {
+          if (prev <= 1) {
+            // Time's up - auto advance to next question
+            handleNextQuestion();
+            return 90;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    };
+  }, [isStarted, isLoading, isSpeaking, questionCount]);
+
+  const handleNextQuestion = async () => {
+    stopListening();
+    stopSpeaking();
+    resetTranscript();
+    setManualInput("");
+    setQuestionTimeLeft(90);
+    
+    const responseText = transcript.trim() || manualInput.trim() || "I'd like to move to the next question please.";
+    await sendMessage(responseText);
+  };
 
   // Timer
   useEffect(() => {
@@ -122,7 +155,9 @@ const Interview = () => {
     setInterviewTime(0);
     setQuestionCount(0);
     setCurrentQuestion("");
+    setQuestionTimeLeft(90);
     resetTranscript();
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
   };
 
   const handleSendResponse = async () => {
@@ -262,10 +297,19 @@ const Interview = () => {
             <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
             <span className="text-sm font-medium text-foreground">Interview in Progress</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Duration: {formatTime(interviewTime)}</span>
+          <div className="flex items-center gap-4 text-sm">
+            {/* Question Timer */}
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${
+              questionTimeLeft <= 15 ? 'bg-destructive/20 text-destructive' : 
+              questionTimeLeft <= 30 ? 'bg-warning/20 text-warning' : 
+              'bg-secondary text-muted-foreground'
+            }`}>
+              <Clock className="w-4 h-4" />
+              <span className="font-medium">{questionTimeLeft}s</span>
+            </div>
+            <span className="text-muted-foreground">Duration: {formatTime(interviewTime)}</span>
             <span className="text-border">|</span>
-            <span>Question {questionCount}</span>
+            <span className="text-muted-foreground">Question {questionCount}</span>
           </div>
         </div>
       </header>
@@ -368,6 +412,17 @@ const Interview = () => {
             onClick={handleEndInterview}
           >
             <PhoneOff className="w-6 h-6" />
+          </Button>
+
+          {/* Next Question Button */}
+          <Button
+            variant="outline"
+            onClick={handleNextQuestion}
+            disabled={isLoading || questionCount === 0}
+            className="h-12 px-4 rounded-full gap-2"
+          >
+            <SkipForward className="w-5 h-5" />
+            <span className="hidden sm:inline">Next Question</span>
           </Button>
 
           <Button
