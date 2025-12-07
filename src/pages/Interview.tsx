@@ -136,11 +136,32 @@ const Interview = () => {
     
     resetTranscript();
     setManualInput("");
-    
-    if (speechSupported) {
-      setTimeout(() => startListening(), 1000);
-    }
   };
+
+  // Auto-advance: When AI finishes speaking and user has a response, or restart listening
+  useEffect(() => {
+    if (!isSpeaking && !isLoading && isStarted && speechSupported) {
+      // AI finished speaking, start listening for user response
+      setTimeout(() => startListening(), 500);
+    }
+  }, [isSpeaking, isLoading, isStarted, speechSupported, startListening]);
+
+  // Auto-send response after user stops speaking (silence detection)
+  useEffect(() => {
+    if (!isListening || isLoading || isSpeaking) return;
+    
+    const currentTranscript = transcript.trim();
+    if (!currentTranscript) return;
+    
+    // Wait for 2 seconds of silence before auto-sending
+    const silenceTimer = setTimeout(() => {
+      if (transcript.trim() === currentTranscript && currentTranscript.length > 10) {
+        handleSendResponse();
+      }
+    }, 2500);
+    
+    return () => clearTimeout(silenceTimer);
+  }, [transcript, isListening, isLoading, isSpeaking]);
 
   // Show errors
   useEffect(() => {
