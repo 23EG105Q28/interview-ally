@@ -18,7 +18,22 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const systemPrompt = `You are an expert resume analyzer and ATS specialist. Analyze the provided resume and return a detailed JSON assessment.
+    // Check if it's a base64 encoded file
+    let processedResumeText = resumeText;
+    let isFileUpload = false;
+    
+    if (resumeText.startsWith("[FILE_BASE64:")) {
+      isFileUpload = true;
+      // Extract file type and base64 content
+      const match = resumeText.match(/\[FILE_BASE64:([^\]]+)\](.+)/);
+      if (match) {
+        const fileType = match[1];
+        const base64Content = match[2];
+        processedResumeText = `This is a ${fileType} file encoded in base64. Please extract all text content from it and analyze it as a resume:\n\n${base64Content}`;
+      }
+    }
+
+    const systemPrompt = `You are an expert resume analyzer and ATS specialist. ${isFileUpload ? 'The user has uploaded a resume file (PDF, DOCX, or similar). First extract all readable text content from it, then analyze it.' : 'Analyze the provided resume text.'} Return a detailed JSON assessment.
 
 Your response MUST be valid JSON with this exact structure:
 {
@@ -76,7 +91,7 @@ Be specific and actionable in your feedback.`;
 
     const userMessage = `Analyze this resume${targetRole ? ` for the role of ${targetRole}` : ''}:
 
-${resumeText}`;
+${processedResumeText}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",

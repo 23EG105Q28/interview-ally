@@ -1,59 +1,94 @@
 import { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Upload, FileText, CheckCircle, AlertTriangle, XCircle, Sparkles, Download, Loader2, X } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, XCircle, Sparkles, Loader2, X } from "lucide-react";
 import { useResumeAnalysis } from "@/hooks/useResumeAnalysis";
 import { useToast } from "@/hooks/use-toast";
 
 const Resume = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [resumeText, setResumeText] = useState("");
   const [targetRole, setTargetRole] = useState("");
-  const [showTextInput, setShowTextInput] = useState(false);
+  const [isReadingFile, setIsReadingFile] = useState(false);
   const { toast } = useToast();
 
   const { isAnalyzing, error, results, analyzeResume, reset } = useResumeAnalysis();
+
+  const extractTextFromFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      
+      reader.onload = async (e) => {
+        const content = e.target?.result;
+        
+        if (file.type === "text/plain") {
+          resolve(content as string);
+          return;
+        }
+        
+        // For PDF/DOCX, read as base64 and send to AI which can extract text
+        if (content instanceof ArrayBuffer) {
+          const bytes = new Uint8Array(content);
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = btoa(binary);
+          resolve(`[FILE_BASE64:${file.type}]${base64}`);
+        } else {
+          resolve(content as string);
+        }
+      };
+      
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      
+      if (file.type === "text/plain") {
+        reader.readAsText(file);
+      } else {
+        reader.readAsArrayBuffer(file);
+      }
+    });
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = e.target.files?.[0];
     if (!uploadedFile) return;
 
     setFile(uploadedFile);
-    
-    // Read text from file
-    if (uploadedFile.type === "text/plain") {
-      const text = await uploadedFile.text();
-      setResumeText(text);
-    } else {
-      // For PDF/DOCX, we'd need server-side parsing
-      // For now, prompt user to paste text
-      setShowTextInput(true);
-      toast({
-        title: "File uploaded",
-        description: "Please paste your resume text below for best results.",
-      });
-    }
+    toast({
+      title: "File ready",
+      description: `${uploadedFile.name} selected. Click Analyze to continue.`,
+    });
   };
 
   const handleAnalyze = async () => {
-    if (!resumeText.trim()) {
+    if (!file) {
       toast({
-        title: "Resume text required",
-        description: "Please paste your resume text to analyze.",
+        title: "File required",
+        description: "Please upload your resume file first.",
         variant: "destructive",
       });
       return;
     }
     
-    await analyzeResume(resumeText, targetRole || undefined);
+    setIsReadingFile(true);
+    try {
+      const resumeContent = await extractTextFromFile(file);
+      await analyzeResume(resumeContent, targetRole || undefined);
+    } catch (err) {
+      toast({
+        title: "Error reading file",
+        description: "Could not read the file. Try a different format.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsReadingFile(false);
+    }
   };
 
   const handleReset = () => {
     reset();
     setFile(null);
-    setResumeText("");
     setTargetRole("");
-    setShowTextInput(false);
   };
 
   useEffect(() => {
@@ -131,38 +166,14 @@ const Resume = () => {
                         <FileText className="w-5 h-5 text-primary" />
                         <span className="text-foreground">{file.name}</span>
                       </div>
-                      <button onClick={() => { setFile(null); setResumeText(""); }} className="text-muted-foreground hover:text-foreground">
+                      <button onClick={() => setFile(null)} className="text-muted-foreground hover:text-foreground">
                         <X className="w-4 h-4" />
                       </button>
                     </div>
                   )}
 
-                  <div className="mt-6">
-                    <button
-                      onClick={() => setShowTextInput(!showTextInput)}
-                      className="text-sm text-primary hover:underline"
-                    >
-                      {showTextInput ? "Hide text input" : "Or paste resume text directly"}
-                    </button>
-                  </div>
                 </div>
               </div>
-
-              {/* Resume Text Input */}
-              {(showTextInput || file) && (
-                <div className="glass rounded-2xl p-6 mt-6 animate-slide-up" style={{ animationDelay: '150ms' }}>
-                  <label className="block text-sm font-medium text-foreground mb-2">
-                    Resume Text
-                  </label>
-                  <textarea
-                    value={resumeText}
-                    onChange={(e) => setResumeText(e.target.value)}
-                    placeholder="Paste your resume content here..."
-                    rows={8}
-                    className="w-full px-4 py-3 rounded-xl bg-secondary border border-border focus:border-primary focus:outline-none text-foreground placeholder:text-muted-foreground resize-none"
-                  />
-                </div>
-              )}
 
               {/* Target Role Input */}
               <div className="glass rounded-2xl p-6 mt-6 animate-slide-up" style={{ animationDelay: '200ms' }}>
@@ -184,12 +195,12 @@ const Resume = () => {
                   variant="hero" 
                   size="xl" 
                   onClick={handleAnalyze}
-                  disabled={!resumeText.trim() || isAnalyzing}
+                  disabled={!file || isAnalyzing || isReadingFile}
                 >
-                  {isAnalyzing ? (
+                  {isAnalyzing || isReadingFile ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      Analyzing...
+                      {isReadingFile ? "Reading file..." : "Analyzing..."}
                     </>
                   ) : (
                     <>
