@@ -1,1 +1,10 @@
 project_id = "xpmmysbhvpjnipuzlecy"
+
+[functions.interview-chat]
+verify_jwt = false
+
+[functions.analyze-resume]
+verify_jwt = false
+
+[functions.practice-feedback]
+verify_jwt = false

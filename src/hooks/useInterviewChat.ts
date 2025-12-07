@@ -103,10 +103,87 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
   const startInterview = useCallback(async () => {
     setMessages([]);
     setError(null);
+    setCurrentResponse("");
     
-    // Send initial message to start the interview
-    return sendMessage("Hello, I'm ready to begin the interview.");
-  }, [sendMessage]);
+    // Start with empty messages to get opening question
+    setIsLoading(true);
+    
+    try {
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/interview-chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "Please start the interview with your first question." }],
+          personality: options.personality || "professional",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Request failed: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let fullResponse = "";
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") continue;
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) {
+              fullResponse += content;
+              setCurrentResponse(fullResponse);
+            }
+          } catch {
+            // Incomplete JSON
+          }
+        }
+      }
+
+      const assistantMessage: Message = { role: "assistant", content: fullResponse };
+      setMessages([
+        { role: "user", content: "Please start the interview with your first question." },
+        assistantMessage
+      ]);
+      setCurrentResponse("");
+      
+      if (options.onResponse) {
+        options.onResponse(fullResponse);
+      }
+      
+      return fullResponse;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to start interview";
+      setError(errorMessage);
+      console.error("Start interview error:", err);
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [options.personality, options.onResponse]);
 
   const resetChat = useCallback(() => {
     setMessages([]);
