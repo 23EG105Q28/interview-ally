@@ -1,24 +1,49 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Upload, FileText, CheckCircle, AlertTriangle, XCircle, Sparkles, Loader2, X } from "lucide-react";
 import { useResumeAnalysis } from "@/hooks/useResumeAnalysis";
 import { useToast } from "@/hooks/use-toast";
-import * as pdfjsLib from "pdfjs-dist";
 
-// Set up PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Declare global type for PDF.js
+declare global {
+  interface Window {
+    pdfjsLib: any;
+  }
+}
 
 const Resume = () => {
   const [file, setFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState("");
   const [isReadingFile, setIsReadingFile] = useState(false);
+  const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
   const { toast } = useToast();
 
   const { isAnalyzing, error, results, analyzeResume, reset } = useResumeAnalysis();
 
+  // Load PDF.js from CDN
+  useEffect(() => {
+    if (window.pdfjsLib) {
+      setPdfJsLoaded(true);
+      return;
+    }
+    
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      setPdfJsLoaded(true);
+    };
+    document.head.appendChild(script);
+  }, []);
+
   const extractTextFromPDF = async (arrayBuffer: ArrayBuffer): Promise<string> => {
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    if (!window.pdfjsLib) {
+      throw new Error("PDF reader not loaded");
+    }
+    
+    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     let fullText = "";
     
     for (let i = 1; i <= pdf.numPages; i++) {
