@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User } from "lucide-react";
@@ -146,10 +147,24 @@ const Interview = () => {
     }
   };
 
+  const navigate = useNavigate();
+
   const handleEndInterview = () => {
     stopMedia();
     stopListening();
     stopSpeaking();
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    
+    // Navigate to summary with interview data
+    navigate("/interview-summary", {
+      state: {
+        messages,
+        duration: interviewTime,
+        questionCount,
+        personality: selectedStyle,
+      },
+    });
+    
     resetChat();
     setIsStarted(false);
     setInterviewTime(0);
@@ -157,7 +172,6 @@ const Interview = () => {
     setCurrentQuestion("");
     setQuestionTimeLeft(90);
     resetTranscript();
-    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
   };
 
   const handleSendResponse = async () => {
