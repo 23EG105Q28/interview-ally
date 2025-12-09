@@ -21,7 +21,7 @@ serve(async (req) => {
   }
 
   try {
-    const { messages, personality = "professional" } = await req.json();
+    const { messages, personality = "professional", resumeText, targetRole } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     
     if (!LOVABLE_API_KEY) {
@@ -32,7 +32,32 @@ serve(async (req) => {
       ? personality as PersonalityKey 
       : "professional";
     
+    // Build context from resume if provided
+    let resumeContext = "";
+    if (resumeText && resumeText.trim()) {
+      const truncatedResume = resumeText.length > 8000 
+        ? resumeText.substring(0, 8000) + "..." 
+        : resumeText;
+      
+      resumeContext = `
+CANDIDATE RESUME INFORMATION:
+${truncatedResume}
+
+TARGET ROLE: ${targetRole || "General Position"}
+
+IMPORTANT: Use this resume to:
+1. Ask specific questions about the candidate's past experiences mentioned in the resume
+2. Probe deeper into projects, achievements, and skills they've listed
+3. Ask about gaps or transitions in their career
+4. Relate questions to the target role they're applying for
+5. Ask behavioral questions based on their specific work history
+6. Challenge them on claims made in the resume with follow-up questions
+`;
+    }
+
     const systemPrompt = `${interviewerPersonalities[validPersonality]}
+
+${resumeContext}
 
 You are conducting a realistic job interview. Follow these rules:
 1. Ask ONE question at a time and wait for the candidate's response
@@ -43,13 +68,15 @@ You are conducting a realistic job interview. Follow these rules:
 6. After 6-8 exchanges, start wrapping up the interview
 7. Always stay in character as the interviewer - never break the fourth wall
 8. Respond naturally as if in a real interview setting
+${resumeText ? `9. Reference specific items from the candidate's resume when asking questions
+10. Ask about specific projects, roles, or achievements mentioned in their resume` : ''}
 
 When action is "analyze", provide a brief 2-3 sentence assessment of the candidate's last response including:
 - Strengths in the response
 - Areas for improvement
 - Estimated confidence score (0-100)
 
-Current interview context: This is a professional interview for a mid-level position.`;
+Current interview context: ${targetRole ? `Interview for ${targetRole} position` : 'Professional interview for a mid-level position'}.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
