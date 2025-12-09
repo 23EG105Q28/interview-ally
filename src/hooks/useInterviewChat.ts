@@ -7,24 +7,28 @@ interface Message {
 
 interface UseInterviewChatOptions {
   personality?: string;
+  resumeText?: string;
+  targetRole?: string;
   onResponse?: (text: string) => void;
 }
 
 export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
+  const { personality = "professional", resumeText, targetRole, onResponse } = options;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentResponse, setCurrentResponse] = useState("");
 
-  const sendMessage = useCallback(async (userMessage: string) => {
-    if (!userMessage.trim() || isLoading) return;
+  const sendMessage = useCallback(async (userMessage: string): Promise<string | null> => {
+    if (!userMessage.trim()) return null;
     
-    const newUserMessage: Message = { role: "user", content: userMessage };
-    const updatedMessages = [...messages, newUserMessage];
-    setMessages(updatedMessages);
     setIsLoading(true);
     setError(null);
     setCurrentResponse("");
+
+    const userMsg: Message = { role: "user", content: userMessage };
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
 
     try {
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/interview-chat`, {
@@ -34,8 +38,10 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({
-          messages: updatedMessages,
-          personality: options.personality || "professional",
+          messages: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
+          personality,
+          resumeText,
+          targetRole,
         }),
       });
 
@@ -44,9 +50,9 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
         throw new Error(errorData.error || `Request failed: ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
+      if (!response.body) throw new Error("No response body");
 
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullResponse = "";
       let buffer = "";
@@ -56,13 +62,11 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-          if (line.startsWith(":") || line.trim() === "") continue;
+        for (const line of lines) {
+          if (!line.trim() || line.startsWith(":")) continue;
           if (!line.startsWith("data: ")) continue;
 
           const jsonStr = line.slice(6).trim();
@@ -76,39 +80,54 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
               setCurrentResponse(fullResponse);
             }
           } catch {
-            // Incomplete JSON, will try next chunk
+            // Ignore parse errors for incomplete chunks
           }
         }
       }
 
-      const assistantMessage: Message = { role: "assistant", content: fullResponse };
-      setMessages([...updatedMessages, assistantMessage]);
-      setCurrentResponse("");
-      
-      if (options.onResponse) {
-        options.onResponse(fullResponse);
+      // Process remaining buffer
+      if (buffer.trim() && buffer.startsWith("data: ")) {
+        const jsonStr = buffer.slice(6).trim();
+        if (jsonStr !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) {
+              fullResponse += content;
+            }
+          } catch {
+            // Ignore
+          }
+        }
       }
-      
+
+      if (fullResponse) {
+        setMessages((prev) => [...prev, { role: "assistant", content: fullResponse }]);
+        onResponse?.(fullResponse);
+      }
+
+      setCurrentResponse("");
       return fullResponse;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to get response";
       setError(errorMessage);
-      console.error("Interview chat error:", err);
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading, options.personality, options.onResponse]);
+  }, [messages, personality, resumeText, targetRole, onResponse]);
 
-  const startInterview = useCallback(async () => {
+  const startInterview = useCallback(async (): Promise<string | null> => {
     setMessages([]);
-    setError(null);
     setCurrentResponse("");
-    
-    // Start with empty messages to get opening question
+    setError(null);
     setIsLoading(true);
-    
+
     try {
+      const startPrompt = resumeText
+        ? "Start the interview. Begin by acknowledging you've reviewed my resume and ask the first question based on my background."
+        : "Please start the interview with your first question.";
+
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/interview-chat`, {
         method: "POST",
         headers: {
@@ -116,8 +135,10 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({
-          messages: [{ role: "user", content: "Please start the interview with your first question." }],
-          personality: options.personality || "professional",
+          messages: [{ role: "user", content: startPrompt }],
+          personality,
+          resumeText,
+          targetRole,
         }),
       });
 
@@ -126,9 +147,9 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
         throw new Error(errorData.error || `Request failed: ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
+      if (!response.body) throw new Error("No response body");
 
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullResponse = "";
       let buffer = "";
@@ -138,13 +159,11 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-          if (line.startsWith(":") || line.trim() === "") continue;
+        for (const line of lines) {
+          if (!line.trim() || line.startsWith(":")) continue;
           if (!line.startsWith("data: ")) continue;
 
           const jsonStr = line.slice(6).trim();
@@ -158,32 +177,29 @@ export const useInterviewChat = (options: UseInterviewChatOptions = {}) => {
               setCurrentResponse(fullResponse);
             }
           } catch {
-            // Incomplete JSON
+            // Ignore
           }
         }
       }
 
-      const assistantMessage: Message = { role: "assistant", content: fullResponse };
-      setMessages([
-        { role: "user", content: "Please start the interview with your first question." },
-        assistantMessage
-      ]);
-      setCurrentResponse("");
-      
-      if (options.onResponse) {
-        options.onResponse(fullResponse);
+      if (fullResponse) {
+        setMessages([
+          { role: "user", content: startPrompt },
+          { role: "assistant", content: fullResponse },
+        ]);
+        onResponse?.(fullResponse);
       }
-      
+
+      setCurrentResponse("");
       return fullResponse;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to start interview";
       setError(errorMessage);
-      console.error("Start interview error:", err);
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [options.personality, options.onResponse]);
+  }, [personality, resumeText, targetRole, onResponse]);
 
   const resetChat = useCallback(() => {
     setMessages([]);

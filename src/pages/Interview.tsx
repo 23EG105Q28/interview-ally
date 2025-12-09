@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User, Upload, FileText, X } from "lucide-react";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
@@ -13,6 +13,13 @@ import TranscriptDisplay from "@/components/TranscriptDisplay";
 import LiveMetrics from "@/components/LiveMetrics";
 import { useToast } from "@/hooks/use-toast";
 
+// PDF.js type
+declare global {
+  interface Window {
+    pdfjsLib: any;
+  }
+}
+
 const personalityStyles = [
   { id: "friendly", label: "Friendly HR", description: "Warm and encouraging" },
   { id: "professional", label: "HR Professional", description: "Formal and structured" },
@@ -22,6 +29,9 @@ const personalityStyles = [
 ];
 
 const Interview = () => {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  
   const [isStarted, setIsStarted] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState("professional");
   const [interviewTime, setInterviewTime] = useState(0);
@@ -29,9 +39,86 @@ const Interview = () => {
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [manualInput, setManualInput] = useState("");
   const [questionTimeLeft, setQuestionTimeLeft] = useState(90);
+  
+  // Resume state
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [resumeText, setResumeText] = useState("");
+  const [targetRole, setTargetRole] = useState("");
+  const [isLoadingResume, setIsLoadingResume] = useState(false);
+  const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
+  
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const questionTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const { toast } = useToast();
+
+  // Load PDF.js
+  useEffect(() => {
+    if (window.pdfjsLib) {
+      setPdfJsLoaded(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      setPdfJsLoaded(true);
+    };
+    document.head.appendChild(script);
+  }, []);
+
+  const extractTextFromPDF = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    if (!window.pdfjsLib) throw new Error("PDF reader not loaded");
+    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += pageText + "\n";
+    }
+    return fullText.trim();
+  };
+
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    if (file.type === "text/plain") return await file.text();
+    if (file.type === "application/pdf") {
+      const arrayBuffer = await file.arrayBuffer();
+      return await extractTextFromPDF(arrayBuffer);
+    }
+    const text = await file.text();
+    return text.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ");
+  };
+
+  const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setResumeFile(file);
+    setIsLoadingResume(true);
+    
+    try {
+      const text = await extractTextFromFile(file);
+      setResumeText(text);
+      toast({
+        title: "Resume loaded",
+        description: "AI will ask questions based on your resume.",
+      });
+    } catch (err) {
+      toast({
+        title: "Error reading file",
+        description: "Could not read the resume. Try a different format.",
+        variant: "destructive",
+      });
+      setResumeFile(null);
+    } finally {
+      setIsLoadingResume(false);
+    }
+  };
+
+  const removeResume = () => {
+    setResumeFile(null);
+    setResumeText("");
+  };
 
   const { 
     stream, 
@@ -72,21 +159,22 @@ const Interview = () => {
     resetChat,
   } = useInterviewChat({
     personality: selectedStyle,
+    resumeText: resumeText || undefined,
+    targetRole: targetRole || undefined,
     onResponse: (text) => {
       setCurrentQuestion(text);
       speak(text);
       setQuestionCount(prev => prev + 1);
-      setQuestionTimeLeft(90); // Reset question timer
+      setQuestionTimeLeft(90);
     },
   });
 
-  // Question timer (90 seconds per question)
+  // Question timer
   useEffect(() => {
     if (isStarted && !isLoading && !isSpeaking && questionCount > 0) {
       questionTimerRef.current = setInterval(() => {
         setQuestionTimeLeft(prev => {
           if (prev <= 1) {
-            // Time's up - auto advance to next question
             handleNextQuestion();
             return 90;
           }
@@ -147,21 +235,20 @@ const Interview = () => {
     }
   };
 
-  const navigate = useNavigate();
-
   const handleEndInterview = () => {
     stopMedia();
     stopListening();
     stopSpeaking();
     if (questionTimerRef.current) clearInterval(questionTimerRef.current);
     
-    // Navigate to summary with interview data
     navigate("/interview-summary", {
       state: {
         messages,
         duration: interviewTime,
         questionCount,
         personality: selectedStyle,
+        resumeText,
+        targetRole,
       },
     });
     
@@ -187,22 +274,20 @@ const Interview = () => {
     setManualInput("");
   };
 
-  // Auto-advance: When AI finishes speaking and user has a response, or restart listening
+  // Auto-advance
   useEffect(() => {
     if (!isSpeaking && !isLoading && isStarted && speechSupported) {
-      // AI finished speaking, start listening for user response
       setTimeout(() => startListening(), 500);
     }
   }, [isSpeaking, isLoading, isStarted, speechSupported, startListening]);
 
-  // Auto-send response after user stops speaking (silence detection)
+  // Auto-send after silence
   useEffect(() => {
     if (!isListening || isLoading || isSpeaking) return;
     
     const currentTranscript = transcript.trim();
     if (!currentTranscript) return;
     
-    // Wait for 2 seconds of silence before auto-sending
     const silenceTimer = setTimeout(() => {
       if (transcript.trim() === currentTranscript && currentTranscript.length > 10) {
         handleSendResponse();
@@ -234,8 +319,60 @@ const Interview = () => {
                 AI Video Interview
               </h1>
               <p className="text-muted-foreground max-w-xl mx-auto">
-                Face a realistic AI interviewer that adapts to your responses. Your camera and microphone will be used for the interview.
+                Face a realistic AI interviewer that adapts to your responses. Upload your resume for personalized questions.
               </p>
+            </div>
+
+            {/* Resume Upload Section */}
+            <div className="glass rounded-2xl p-6 mb-6 animate-slide-up" style={{ animationDelay: '50ms' }}>
+              <h2 className="font-heading font-semibold text-lg text-foreground mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-primary" />
+                Resume (Optional)
+              </h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Upload your resume and the AI will ask questions based on your experience
+              </p>
+              
+              {!resumeFile ? (
+                <label className="cursor-pointer">
+                  <input
+                    type="file"
+                    accept=".pdf,.docx,.doc,.txt"
+                    onChange={handleResumeUpload}
+                    className="hidden"
+                    disabled={isLoadingResume}
+                  />
+                  <div className="border-2 border-dashed border-border hover:border-primary/50 rounded-xl p-6 text-center transition-colors">
+                    <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                    <span className="text-sm text-muted-foreground">
+                      {isLoadingResume ? "Loading..." : "Click to upload PDF, DOCX, or TXT"}
+                    </span>
+                  </div>
+                </label>
+              ) : (
+                <div className="flex items-center justify-between bg-secondary/50 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-5 h-5 text-primary" />
+                    <span className="text-foreground">{resumeFile.name}</span>
+                  </div>
+                  <button onClick={removeResume} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {resumeFile && (
+                <div className="mt-4">
+                  <label className="block text-sm text-muted-foreground mb-2">Target Role</label>
+                  <input
+                    type="text"
+                    value={targetRole}
+                    onChange={(e) => setTargetRole(e.target.value)}
+                    placeholder="e.g., Senior Software Engineer"
+                    className="w-full px-4 py-2.5 rounded-lg bg-secondary border border-border focus:border-primary focus:outline-none text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Interviewer Style Selection */}
@@ -288,12 +425,14 @@ const Interview = () => {
                 variant="hero" 
                 size="xl" 
                 onClick={handleStartInterview}
-                disabled={isInitializing}
+                disabled={isInitializing || isLoadingResume}
               >
                 {isInitializing ? "Starting..." : "Begin Interview"}
               </Button>
               <p className="text-sm text-muted-foreground mt-4">
-                Ensure your webcam and microphone are working
+                {resumeFile 
+                  ? "Interview will be personalized based on your resume" 
+                  : "Ensure your webcam and microphone are working"}
               </p>
             </div>
           </div>
@@ -310,9 +449,11 @@ const Interview = () => {
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
             <span className="text-sm font-medium text-foreground">Interview in Progress</span>
+            {resumeText && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary">Resume-based</span>
+            )}
           </div>
           <div className="flex items-center gap-4 text-sm">
-            {/* Question Timer */}
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${
               questionTimeLeft <= 15 ? 'bg-destructive/20 text-destructive' : 
               questionTimeLeft <= 30 ? 'bg-warning/20 text-warning' : 
@@ -372,7 +513,7 @@ const Interview = () => {
                 className="flex-1 min-h-[100px]"
               />
 
-              {/* Manual Input (fallback) */}
+              {/* Manual Input */}
               <div className="glass rounded-xl p-3">
                 <div className="flex gap-2">
                   <input
@@ -428,7 +569,6 @@ const Interview = () => {
             <PhoneOff className="w-6 h-6" />
           </Button>
 
-          {/* Next Question Button */}
           <Button
             variant="outline"
             onClick={handleNextQuestion}
