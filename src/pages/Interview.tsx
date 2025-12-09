@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User, Upload, FileText, X } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, SkipForward, Clock, User, Upload, FileText, X, History } from "lucide-react";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
@@ -38,7 +38,10 @@ const Interview = () => {
   const [questionCount, setQuestionCount] = useState(0);
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [manualInput, setManualInput] = useState("");
-  const [questionTimeLeft, setQuestionTimeLeft] = useState(90);
+  const [questionTimeLeft, setQuestionTimeLeft] = useState(60);
+  const [faceWarning, setFaceWarning] = useState(false);
+  const faceCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
   // Resume state
   const [resumeFile, setResumeFile] = useState<File | null>(null);
@@ -169,6 +172,52 @@ const Interview = () => {
     },
   });
 
+  // Face detection function - checks if video is mostly black/no face visible
+  const checkFaceVisibility = useCallback(() => {
+    if (!videoRef.current || !isVideoEnabled || !stream) {
+      setFaceWarning(false);
+      return;
+    }
+    
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+    
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+    }
+    const canvas = canvasRef.current;
+    canvas.width = 100;
+    canvas.height = 100;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(video, 0, 0, 100, 100);
+    const imageData = ctx.getImageData(0, 0, 100, 100);
+    const data = imageData.data;
+    
+    let darkPixels = 0;
+    const totalPixels = data.length / 4;
+    const threshold = 30; // Brightness threshold
+    
+    for (let i = 0; i < data.length; i += 4) {
+      const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      if (brightness < threshold) darkPixels++;
+    }
+    
+    const darkRatio = darkPixels / totalPixels;
+    setFaceWarning(darkRatio > 0.85); // Warning if 85% of pixels are dark
+  }, [videoRef, isVideoEnabled, stream]);
+
+  // Face check interval
+  useEffect(() => {
+    if (isStarted && isVideoEnabled && stream) {
+      faceCheckIntervalRef.current = setInterval(checkFaceVisibility, 2000);
+    }
+    return () => {
+      if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
+    };
+  }, [isStarted, isVideoEnabled, stream, checkFaceVisibility]);
+
   // Question timer
   useEffect(() => {
     if (isStarted && !isLoading && !isSpeaking && questionCount > 0) {
@@ -176,7 +225,7 @@ const Interview = () => {
         setQuestionTimeLeft(prev => {
           if (prev <= 1) {
             handleNextQuestion();
-            return 90;
+            return 60;
           }
           return prev - 1;
         });
@@ -192,7 +241,7 @@ const Interview = () => {
     stopSpeaking();
     resetTranscript();
     setManualInput("");
-    setQuestionTimeLeft(90);
+    setQuestionTimeLeft(60);
     
     const responseText = transcript.trim() || manualInput.trim() || "I'd like to move to the next question please.";
     await sendMessage(responseText);
@@ -257,7 +306,7 @@ const Interview = () => {
     setInterviewTime(0);
     setQuestionCount(0);
     setCurrentQuestion("");
-    setQuestionTimeLeft(90);
+    setQuestionTimeLeft(60);
     resetTranscript();
   };
 
@@ -314,20 +363,29 @@ const Interview = () => {
         <Header />
         <main className="pt-24 pb-12">
           <div className="container mx-auto px-4 max-w-4xl">
-            <div className="text-center mb-12 animate-slide-up">
+            <div className="text-center mb-8 animate-slide-up">
               <h1 className="font-heading font-bold text-3xl md:text-4xl text-foreground mb-4">
                 AI Video Interview
               </h1>
-              <p className="text-muted-foreground max-w-xl mx-auto">
+              <p className="text-muted-foreground max-w-xl mx-auto mb-4">
                 Face a realistic AI interviewer that adapts to your responses. Upload your resume for personalized questions.
               </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => navigate("/dashboard")}
+                className="gap-2"
+              >
+                <History className="w-4 h-4" />
+                View Interview History
+              </Button>
             </div>
 
             {/* Resume Upload Section */}
             <div className="glass rounded-2xl p-6 mb-6 animate-slide-up" style={{ animationDelay: '50ms' }}>
               <h2 className="font-heading font-semibold text-lg text-foreground mb-4 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-primary" />
-                Resume (Optional)
+                Resume
               </h2>
               <p className="text-sm text-muted-foreground mb-4">
                 Upload your resume and the AI will ask questions based on your experience
@@ -361,18 +419,16 @@ const Interview = () => {
                 </div>
               )}
 
-              {resumeFile && (
-                <div className="mt-4">
-                  <label className="block text-sm text-muted-foreground mb-2">Target Role</label>
-                  <input
-                    type="text"
-                    value={targetRole}
-                    onChange={(e) => setTargetRole(e.target.value)}
-                    placeholder="e.g., Senior Software Engineer"
-                    className="w-full px-4 py-2.5 rounded-lg bg-secondary border border-border focus:border-primary focus:outline-none text-foreground placeholder:text-muted-foreground"
-                  />
-                </div>
-              )}
+              <div className="mt-4">
+                <label className="block text-sm text-muted-foreground mb-2">Target Role</label>
+                <input
+                  type="text"
+                  value={targetRole}
+                  onChange={(e) => setTargetRole(e.target.value)}
+                  placeholder="e.g., Senior Software Engineer"
+                  className="w-full px-4 py-2.5 rounded-lg bg-secondary border border-border focus:border-primary focus:outline-none text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
             </div>
 
             {/* Interviewer Style Selection */}
@@ -494,13 +550,22 @@ const Interview = () => {
             {/* User Video & Controls */}
             <div className="flex flex-col gap-4 min-h-0">
               {/* User Camera */}
-              <VideoPreview
-                videoRef={videoRef}
-                stream={stream}
-                isVideoEnabled={isVideoEnabled}
-                label="You"
-                className="h-[200px]"
-              />
+              <div className="relative">
+                <VideoPreview
+                  videoRef={videoRef}
+                  stream={stream}
+                  isVideoEnabled={isVideoEnabled}
+                  label="You"
+                  className="h-[200px]"
+                />
+                {/* Face Warning */}
+                {faceWarning && isVideoEnabled && (
+                  <div className="absolute top-2 left-2 right-2 bg-destructive/90 text-destructive-foreground text-xs px-3 py-2 rounded-lg flex items-center gap-2 animate-pulse">
+                    <User className="w-4 h-4" />
+                    <span>Face not visible - please adjust your camera</span>
+                  </div>
+                )}
+              </div>
 
               {/* Live Metrics */}
               <LiveMetrics isActive={isListening} transcript={transcript} />
