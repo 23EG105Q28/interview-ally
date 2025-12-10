@@ -8,7 +8,7 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import { useInterviewChat } from "@/hooks/useInterviewChat";
 import VideoPreview from "@/components/VideoPreview";
-import AIAvatar from "@/components/AIAvatar";
+import RealisticAIAvatar from "@/components/RealisticAIAvatar";
 import TranscriptDisplay from "@/components/TranscriptDisplay";
 import LiveMetrics from "@/components/LiveMetrics";
 import { useToast } from "@/hooks/use-toast";
@@ -532,7 +532,7 @@ const Interview = () => {
             {/* AI Interviewer */}
             <div className="lg:col-span-2 glass rounded-2xl overflow-hidden relative flex flex-col">
               <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-secondary to-card p-8">
-                <AIAvatar 
+                <RealisticAIAvatar 
                   isSpeaking={isSpeaking} 
                   personality={selectedStyle}
                 />

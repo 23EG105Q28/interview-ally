@@ -1,4 +1,4 @@
-import { Video, FileText, MessageSquare, BookOpen, TrendingUp } from "lucide-react";
+import { Video, FileText, MessageSquare, BookOpen, TrendingUp, Mic } from "lucide-react";
 import ModeCard from "./ModeCard";
 
 const modes = [
@@ -22,6 +22,13 @@ const modes = [
     icon: MessageSquare,
     path: "/practice",
     gradient: "bg-gradient-to-br from-success/20 to-transparent",
+  },
+  {
+    title: "Reading Test",
+    description: "Test your speech clarity and fluency with our scrolling reading test. Get scored on pronunciation, accuracy, and pace.",
+    icon: Mic,
+    path: "/reading-test",
+    gradient: "bg-gradient-to-br from-accent/20 to-primary/20",
   },
   {
     title: "Question Bank",
@@ -50,7 +57,7 @@ const ModesSection = () => {
             <span className="gradient-text">Interview Mode</span>
           </h2>
           <p className="text-muted-foreground">
-            Five powerful modes designed to prepare you for every aspect of the interview process.
+            Six powerful modes designed to prepare you for every aspect of the interview process.
           </p>
         </div>
 
