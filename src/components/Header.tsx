@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Brain, Menu, X, User, LogOut, ChevronDown } from "lucide-react";
+import { Brain, Menu, X, User, LogOut, ChevronDown, Settings } from "lucide-react";
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -17,6 +17,7 @@ const navItems = [
   { label: "Resume Scoring", path: "/resume" },
   { label: "Practice", path: "/practice" },
   { label: "Reading Test", path: "/reading-test" },
+  { label: "Performance", path: "/dashboard" },
 ];
 
 const Header = () => {
@@ -82,6 +83,10 @@ const Header = () => {
                   <DropdownMenuItem onClick={() => navigate("/dashboard")}>
                     <User className="w-4 h-4 mr-2" />
                     Dashboard
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/settings")}>
+                    <Settings className="w-4 h-4 mr-2" />
+                    Settings
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
