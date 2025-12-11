@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Play } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const HeroSection = () => {
@@ -47,10 +47,6 @@ const HeroSection = () => {
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </Link>
-            <Button variant="glass" size="xl" className="group">
-              <Play className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              Watch Demo
-            </Button>
           </div>
 
           {/* Stats */}

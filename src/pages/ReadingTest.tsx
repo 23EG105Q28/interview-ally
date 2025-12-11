@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Play, Pause, RotateCcw, Settings, BookOpen, Mic, MicOff,
-  Video, VideoOff, ChevronDown, ChevronUp, Timer, Gauge
+  Video, VideoOff, ChevronDown, ChevronUp, Timer, Gauge, AlertTriangle
 } from "lucide-react";
 
 type ScrollSpeed = "slow" | "medium" | "fast" | "custom";
@@ -47,11 +47,14 @@ const ReadingTest = () => {
   // Results
   const [results, setResults] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [faceWarning, setFaceWarning] = useState<string | null>(null);
   
   // Refs
   const passageRef = useRef<HTMLDivElement>(null);
   const scrollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const faceCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
   // Media & Speech
   const { stream, videoRef, isVideoEnabled, isAudioEnabled, startMedia, stopMedia, toggleVideo, toggleAudio } = useMediaDevices();
@@ -224,8 +227,65 @@ Practice is key to improving communication skills. Regular reading helps expand 
     return () => {
       if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
+      if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
     };
   }, []);
+
+  // Face visibility check
+  const checkFaceVisibility = useCallback(() => {
+    if (!videoRef.current || !stream) return;
+    
+    const video = videoRef.current;
+    if (video.readyState !== 4) return;
+
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+    }
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    ctx.drawImage(video, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    let darkPixels = 0;
+    let totalPixels = data.length / 4;
+    let totalBrightness = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const brightness = (r + g + b) / 3;
+      totalBrightness += brightness;
+      if (brightness < 30) darkPixels++;
+    }
+
+    const avgBrightness = totalBrightness / totalPixels;
+    const darkPercentage = (darkPixels / totalPixels) * 100;
+
+    if (darkPercentage > 85 || avgBrightness < 20) {
+      setFaceWarning("Your face is not visible. Please check your camera and lighting.");
+    } else if (avgBrightness < 40) {
+      setFaceWarning("Low lighting detected. Please improve your lighting for better results.");
+    } else {
+      setFaceWarning(null);
+    }
+  }, [stream, videoRef]);
+
+  // Start face detection when in reading phase
+  useEffect(() => {
+    if (phase === "reading" && stream) {
+      faceCheckIntervalRef.current = setInterval(checkFaceVisibility, 2000);
+      return () => {
+        if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
+      };
+    }
+  }, [phase, stream, checkFaceVisibility]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -421,13 +481,21 @@ Practice is key to improving communication skills. Regular reading helps expand 
 
               {/* Video & Transcript */}
               <div className="flex flex-col gap-4 min-h-0">
-                <VideoPreview
-                  videoRef={videoRef}
-                  stream={stream}
-                  isVideoEnabled={isVideoEnabled}
-                  label="You"
-                  className="h-[180px]"
-                />
+                <div className="relative">
+                  <VideoPreview
+                    videoRef={videoRef}
+                    stream={stream}
+                    isVideoEnabled={isVideoEnabled}
+                    label="You"
+                    className="h-[180px]"
+                  />
+                  {faceWarning && (
+                    <div className="absolute inset-x-0 bottom-0 bg-destructive/90 text-destructive-foreground px-3 py-2 text-xs flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                      <span>{faceWarning}</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Live Transcript */}
                 <div className="glass rounded-xl p-4 flex-1 min-h-[150px] overflow-y-auto">

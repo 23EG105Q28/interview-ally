@@ -15,6 +15,7 @@ import Resume from "./pages/Resume";
 import Practice from "./pages/Practice";
 import Questions from "./pages/Questions";
 import Training from "./pages/Training";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -33,6 +34,7 @@ const App = () => (
             <Route path="/interview-summary" element={<ProtectedRoute><InterviewSummary /></ProtectedRoute>} />
             <Route path="/reading-test" element={<ProtectedRoute><ReadingTest /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/resume" element={<Resume />} />
             <Route path="/practice" element={<Practice />} />
             <Route path="/questions" element={<Questions />} />
