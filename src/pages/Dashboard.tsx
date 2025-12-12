@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import PerformanceAnalytics from "@/components/PerformanceAnalytics";
 import { 
   User, Video, BookOpen, FileText, Calendar, 
-  Trophy, TrendingUp, Clock, Eye 
+  Trophy, TrendingUp, Clock, Eye, BarChart3 
 } from "lucide-react";
 
 interface InterviewResult {
@@ -166,12 +167,20 @@ const Dashboard = () => {
           </div>
 
           {/* Results Tabs */}
-          <Tabs defaultValue="interviews" className="animate-slide-up" style={{ animationDelay: "250ms" }}>
+          <Tabs defaultValue="analytics" className="animate-slide-up" style={{ animationDelay: "250ms" }}>
             <TabsList className="mb-6">
+              <TabsTrigger value="analytics" className="gap-2">
+                <BarChart3 className="w-4 h-4" />
+                Performance Analytics
+              </TabsTrigger>
               <TabsTrigger value="interviews">My Interviews</TabsTrigger>
               <TabsTrigger value="reading">My Reading Tests</TabsTrigger>
               {isAdmin && <TabsTrigger value="admin">All Results (Admin)</TabsTrigger>}
             </TabsList>
+
+            <TabsContent value="analytics">
+              <PerformanceAnalytics />
+            </TabsContent>
 
             <TabsContent value="interviews">
               {isLoading ? (
